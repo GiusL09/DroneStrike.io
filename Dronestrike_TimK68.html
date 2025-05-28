@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>DroneStrike.io</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; overflow: hidden; background: #111;
+      font-family: sans-serif; color: white;
+    }
+    canvas {
+      display: block; background-color: #222;
+    }
+    #bestScore {
+      position: absolute;
+      top: 10px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.6);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 18px;
+      font-weight: bold;
+      color: gold;
+      text-align: center;
+      min-width: 200px;
+    }
+    #scoreboard {
+      position: absolute;
+      top: 50px; left: 10px;
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 14px;
+      min-width: 180px;
+    }
+    #playerRank {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #0ff;
+      font-weight: bold;
+    }
+    #leaderboard {
+      position: absolute;
+      top: 10px; right: 10px;
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 14px;
+      max-width: 220px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    #leaderboard h3 {
+      margin: 0 0 5px;
+      font-size: 16px;
+      color: #0ff;
+      text-align: center;
+    }
+    #leaderboard ul {
+      list-style: none;
+      padding: 0; margin: 0;
+    }
+    #leaderboard li {
+      margin-bottom: 3px;
+    }
+    #gameOver, #mainMenu, #customMenu {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.7);
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+    }
+    #gameOver, #customMenu { display: none; }
+    input, button {
+      margin-top: 10px; padding: 8px 16px; font-size: 16px;
+    }
+    .btn-accueil {
+      margin-top: 10px; padding: 8px 16px; font-size: 16px;
+      text-decoration: none !important; color: black;
+    }
+  </style>
+</head>
+<body>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="bestScore">Record Mondial : </div>
+
+  <div id="scoreboard">
+    <div>Joueur : <span id="playerNameDisplay">?</span></div>
+    <div>Score : <span id="score">0</span></div>
+    <div>Temps : <span id="time">0</span>s</div>
+    <div id="playerRank">Classement : </div>
+  </div>
+
+  <div id="leaderboard">
+    <h3>Top Joueurs</h3>
+    <ul id="leaderList"></ul>
+  </div>
+
+  <div id="mainMenu">
+    <h1 style="color:#0ff;">DroneStrike.io</h1>
+    <input type="text" id="nameInput" placeholder="Entrez votre pseudo" /><br>
+    <button id="startBtn">Commencer</button><br>
+    <button id="customBtn">Personnaliser</button>
+  </div>
+
+  <div id="customMenu">
+    <h2>Choix de couleur</h2>
+    <input type="color" id="colorPicker"><br>
+    <button id="saveBtn">Enregistrer</button><br>
+    <button id="backBtn">Retour</button>
+  </div>
+
+  <div id="gameOver">
+    <h2>Vous êtes mort !</h2>
+    <p id="finalStats"></p>
+    <button onclick="location.reload()">Rejouer</button>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import { getFirestore, collection, doc, setDoc, updateDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const firebaseConfig = {
+        apiKey: "AIzaSyAt6yrJoJ6Re-fckn4B2a2c4DU0j1qPJ2Y",
+        authDomain: "dronestrike-cde0a.firebaseapp.com",
+        projectId: "dronestrike-cde0a",
+        storageBucket: "dronestrike-cde0a.appspot.com",
+        messagingSenderId: "16290935088",
+        appId: "1:16290935088:web:138581202193f47ea418f5"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      let mouseX = canvas.width / 2, mouseY = canvas.height / 2;
+      let survivalTime = 0, bonusPoints = 0, enemies = [], bonuses = [];
+      let playerDocRef = null;
+      let isPaused = false;
+      let keySequence = [];
+
+      const player = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        size: 20,
+        speed: 5,
+        score: 0,
+        alive: true,
+        color: localStorage.getItem("playerColor") || "#0ff",
+        name: localStorage.getItem("playerName") || ""
+      };
+
+      document.getElementById("playerNameDisplay").innerText = player.name;
+      document.getElementById("nameInput").value = player.name;
+      document.getElementById("colorPicker").value = player.color;
+
+      function openCustomization() {
+        document.getElementById("mainMenu").style.display = "none";
+        document.getElementById("customMenu").style.display = "block";
+      }
+
+      function saveCustomization() {
+        const color = document.getElementById("colorPicker").value;
+        localStorage.setItem("playerColor", color);
+        player.color = color;
+        backToMenu();
+      }
+
+      function backToMenu() {
+        document.getElementById("customMenu").style.display = "none";
+        document.getElementById("mainMenu").style.display = "block";
+      }
+
+      function spawnEnemy() {
+        const angle = Math.random() * 2 * Math.PI;
+        enemies.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: 15,
+          dx: Math.cos(angle) * 2,
+          dy: Math.sin(angle) * 2
+        });
+      }
+
+      function spawnBonus() {
+        const bonus = { x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: 10 };
+        bonuses.push(bonus);
+        setTimeout(() => bonuses = bonuses.filter(b => b !== bonus), 10000);
+      }
+
+      function movePlayer() {
+        const dx = mouseX - player.x, dy = mouseY - player.y;
+        const angle = Math.atan2(dy, dx);
+        player.x += Math.cos(angle) * player.speed;
+        player.y += Math.sin(angle) * player.speed;
+      }
+
+      function moveEnemies() {
+        enemies.forEach(enemy => {
+          enemy.x += enemy.dx;
+          enemy.y += enemy.dy;
+          if (enemy.x < 0 || enemy.x > canvas.width) enemy.dx *= -1;
+          if (enemy.y < 0 || enemy.y > canvas.height) enemy.dy *= -1;
+          const dx = player.x - enemy.x, dy = player.y - enemy.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < player.size + enemy.size && player.alive) {
+            player.alive = false;
+            endGame();
+          }
+        });
+      }
+
+      function checkBonusCollision() {
+        bonuses = bonuses.filter(b => {
+          const dx = player.x - b.x, dy = player.y - b.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < player.size + b.size) { bonusPoints += 5; return false; }
+          return true;
+        });
+      }
+
+      async function updateScore() {
+        player.score = survivalTime + bonusPoints;
+        document.getElementById("score").innerText = player.score;
+        document.getElementById("time").innerText = survivalTime;
+        if (playerDocRef) {
+          try {
+            await updateDoc(playerDocRef, {
+              score: player.score,
+              time: survivalTime,
+              updated: Date.now()
+            });
+          } catch (e) { console.error("Maj score:", e); }
+        }
+      }
+
+      function updateTime() {
+        if (!player.alive||isPaused) return;
+        survivalTime++;
+        updateScore();
+      }
+ 
+      function drawPlayer() {
+        ctx.fillStyle = player.color;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "white";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(player.name, player.x, player.y - player.size - 10);
+      }
+
+      function drawEnemies() {
+        ctx.fillStyle = "#f44";
+        enemies.forEach(e => {
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      function drawBonuses() {
+        ctx.fillStyle = "#4f4";
+        bonuses.forEach(b => {
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      async function endGame() {
+        document.getElementById("gameOver").style.display = "block";
+        document.getElementById("finalStats").innerText = `Score : ${player.score}\nTemps : ${survivalTime}s`;
+        if (playerDocRef) {
+          await updateDoc(playerDocRef, { alive: false });
+        }
+      }
+
+      function gameLoop() {
+        if (!player.alive || isPaused) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        movePlayer(); moveEnemies(); checkBonusCollision();
+        drawPlayer(); drawEnemies(); drawBonuses();
+        requestAnimationFrame(gameLoop);
+      }
+
+      async function updateLeaderboard() {
+        const q = query(collection(db, "live_scores"), orderBy("score", "desc"), limit(45));
+        const snapshot = await getDocs(q);
+
+        let newHTML = "";
+        let bestPlayerHTML = "";
+        let rank = 0;
+        let playerRank = "--";
+
+        snapshot.forEach(doc => {
+          const d = doc.data();
+          rank++;
+          if (rank === 1) {
+            bestPlayerHTML = `Record Mondial : <span style="color:${d.color}">${d.name}</span> — <b>${d.score} pts</b> ${d.alive ? '🔥' : ''}`;
+          }
+          newHTML += `<li><span style="color:${d.color}">${d.name}</span> — ${d.score} pts ${d.alive ? '🔥' : ''}</li>`;
+
+          if (d.name === player.name && d.score === player.score) {
+            playerRank = rank;
+          }
+        });
+
+        document.getElementById("leaderList").innerHTML = newHTML;
+        document.getElementById("bestScore").innerHTML = bestPlayerHTML;
+        document.getElementById("playerRank").innerText = `Classement : ${playerRank}`;
+      }
+
+      function togglePause() {
+        isPaused = !isPaused;
+        if (isPaused) {
+          ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#fff";
+          ctx.font = "40px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("⏸️ Pause", canvas.width / 2, canvas.height / 2);
+        } else {
+          requestAnimationFrame(gameLoop);
+        }
+      }
+
+      function startGame() {
+        const name = document.getElementById("nameInput").value.trim();
+        if (!name) return alert("Entrez un pseudo !");
+        player.name = name;
+        localStorage.setItem("playerName", name);
+        player.color = localStorage.getItem("playerColor") || "#0ff";
+        document.getElementById("playerNameDisplay").innerText = name;
+        document.getElementById("mainMenu").style.display = "none";
+        canvas.style.display = "block";
+
+        const playerId = `${player.name}_${Math.floor(Math.random() * 100000)}`;
+        playerDocRef = doc(db, "live_scores", playerId);
+        setDoc(playerDocRef, {
+          name: player.name,
+          color: player.color,
+          score: 0,
+          time: 0,
+          alive: true,
+          updated: Date.now()
+        });
+
+        gameLoop();
+        setInterval(spawnEnemy, 2000);
+        setInterval(spawnBonus, 5000);
+        setInterval(updateTime, 1000);
+        setInterval(updateLeaderboard, 1000);
+      }
+
+      canvas.addEventListener("mousemove", e => {
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+      });
+      canvas.addEventListener("touchstart", (e) => {
+        if (e.touches.length > 0) {
+          mouseX = e.touches[0].clientX;
+          mouseY = e.touches[0].clientY;
+        }
+      }, { passive: true });
+      canvas.addEventListener("touchmove", (e) => {
+        if (e.touches.length > 0) {
+          mouseX = e.touches[0].clientX;
+          mouseY = e.touches[0].clientY;
+        }
+      }, { passive: true });
+
+        document.addEventListener("keydown", (e) => {
+          const key = e.key.toUpperCase();
+          keySequence.push(key);
+          if (keySequence.length > 5) keySequence.shift();
+          
+          // Pause avec la séquence "PAUSE"
+          if (keySequence.join('') === 'PAUSE') togglePause();
+
+          // Pause avec la touche Espace ou Pause
+          if (e.code === 'Space' || e.code === 'Pause') {
+            e.preventDefault(); // Évite que la page défile
+            togglePause();
+          }
+        });
+
+      document.getElementById("startBtn").addEventListener("click", startGame);
+      document.getElementById("customBtn").addEventListener("click", openCustomization);
+      document.getElementById("saveBtn").addEventListener("click", saveCustomization);
+      document.getElementById("backBtn").addEventListener("click", backToMenu);
+    });
+  </script>
+</body>
+</html>
