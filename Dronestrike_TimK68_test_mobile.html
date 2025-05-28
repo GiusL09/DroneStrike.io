@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0" />
+  <title>DroneStrike.io Mobile</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; overflow: hidden; background: #111;
+      font-family: sans-serif; color: white;
+      height: 100%;
+      width: 100%;
+      touch-action: none;
+    }
+    body { overscroll-behavior: contain; }
+    canvas {
+      display: block;
+      background-color: #222;
+      touch-action: none;
+      width: 100vw;
+      height: 100vh;
+    }
+    #mainMenu, #gameOver, #customMenu {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.7);
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      z-index: 10;
+      width: 90vw;
+      max-width: 400px;
+    }
+    #mainMenu input, #mainMenu button, #customMenu input, #customMenu button, #gameOver button {
+      margin-top: 10px;
+      padding: 10px;
+      font-size: 16px;
+      width: 80%;
+    }
+    #hud {
+      position: absolute; top: 10px; left: 10px;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    #pauseBtn {
+      position: absolute; bottom: 20px; right: 20px;
+      background: #0ff;
+      border: none;
+      padding: 10px;
+      border-radius: 50%;
+      font-size: 20px;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="mainMenu">
+    <h1 style="color:#0ff">DroneStrike.io</h1>
+    <input type="text" id="nameInput" placeholder="Entrez votre pseudo" />
+    <button id="startBtn">Commencer</button>
+    <button id="customBtn">Personnaliser</button>
+  </div>
+
+  <div id="customMenu" style="display:none">
+    <h2>Choix de couleur</h2>
+    <input type="color" id="colorPicker">
+    <button id="saveBtn">Enregistrer</button>
+    <button id="backBtn">Retour</button>
+  </div>
+
+  <div id="gameOver" style="display:none">
+    <h2>Vous êtes mort !</h2>
+    <p id="finalStats"></p>
+    <button onclick="location.reload()">Rejouer</button>
+  </div>
+
+  <div id="hud" style="display:none">
+    Joueur : <span id="playerNameDisplay">?</span><br>
+    Score : <span id="score">0</span><br>
+    Temps : <span id="time">0</span>s
+  </div>
+
+  <button id="pauseBtn" style="display:none">||</button>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    let mouseX = 0, mouseY = 0;
+    let survivalTime = 0, bonusPoints = 0, isPaused = false;
+    let enemies = [], bonuses = [];
+
+    // iPhone 11 screen size: 828 x 1792 px, but we use window.innerWidth/innerHeight for all mobiles
+    function resizeCanvas() {
+      // Pour la netteté sur écran Retina
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerHeight + "px";
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    const player = {
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+      size: 15,
+      speed: 5,
+      score: 0,
+      alive: true,
+      color: localStorage.getItem("playerColor") || "#0ff",
+      name: localStorage.getItem("playerName") || ""
+    };
+
+    document.getElementById("playerNameDisplay").innerText = player.name;
+    document.getElementById("nameInput").value = player.name;
+    document.getElementById("colorPicker").value = player.color;
+
+    function startGame() {
+      const name = document.getElementById("nameInput").value.trim();
+      if (!name) return alert("Entrez un pseudo !");
+      player.name = name;
+      localStorage.setItem("playerName", name);
+
+      document.getElementById("mainMenu").style.display = "none";
+      document.getElementById("hud").style.display = "block";
+      document.getElementById("pauseBtn").style.display = "block";
+      canvas.style.display = "block";
+
+      mouseX = player.x;
+      mouseY = player.y;
+
+      gameLoop();
+      setInterval(spawnEnemy, 2000);
+      setInterval(spawnBonus, 5000);
+      setInterval(() => {
+        if (player.alive && !isPaused) {
+          survivalTime++;
+          updateScore();
+        }
+      }, 1000);
+    }
+
+    function openCustomization() {
+      document.getElementById("mainMenu").style.display = "none";
+      document.getElementById("customMenu").style.display = "block";
+    }
+
+    function saveCustomization() {
+      const color = document.getElementById("colorPicker").value;
+      localStorage.setItem("playerColor", color);
+      player.color = color;
+      backToMenu();
+    }
+
+    function backToMenu() {
+      document.getElementById("customMenu").style.display = "none";
+      document.getElementById("mainMenu").style.display = "block";
+    }
+
+    function spawnEnemy() {
+      const angle = Math.random() * Math.PI * 2;
+      enemies.push({
+        x: Math.random() * window.innerWidth,
+        y: Math.random() * window.innerHeight,
+        size: 10,
+        dx: Math.cos(angle) * 2.5,
+        dy: Math.sin(angle) * 2.5
+      });
+    }
+
+    function spawnBonus() {
+      const bonus = { x: Math.random() * window.innerWidth, y: Math.random() * window.innerHeight, size: 7 };
+      bonuses.push(bonus);
+      setTimeout(() => bonuses = bonuses.filter(b => b !== bonus), 10000);
+    }
+
+    function movePlayer() {
+      const dx = mouseX - player.x;
+      const dy = mouseY - player.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 1) {
+        const angle = Math.atan2(dy, dx);
+        player.x += Math.cos(angle) * player.speed;
+        player.y += Math.sin(angle) * player.speed;
+      }
+      // Empêcher de sortir de l'écran
+      player.x = Math.max(player.size, Math.min(window.innerWidth - player.size, player.x));
+      player.y = Math.max(player.size, Math.min(window.innerHeight - player.size, player.y));
+    }
+
+    function checkCollisions() {
+      enemies.forEach(enemy => {
+        const dx = player.x - enemy.x, dy = player.y - enemy.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < player.size + enemy.size && player.alive) {
+          player.alive = false;
+          endGame();
+        }
+      });
+
+      bonuses = bonuses.filter(b => {
+        const dx = player.x - b.x, dy = player.y - b.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < player.size + b.size) { bonusPoints += 5; return false; }
+        return true;
+      });
+    }
+
+    function updateScore() {
+      player.score = survivalTime + bonusPoints;
+      document.getElementById("score").innerText = player.score;
+      document.getElementById("time").innerText = survivalTime;
+    }
+
+    function drawEntities() {
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      ctx.fillStyle = player.color;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#f44";
+      enemies.forEach(e => {
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = "#4f4";
+      bonuses.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    function gameLoop() {
+      if (!player.alive || isPaused) return;
+      movePlayer();
+      // Balles rebondissantes sur les bords
+      enemies.forEach(e => {
+        e.x += e.dx;
+        e.y += e.dy;
+        // Rebond sur les bords
+        if (e.x - e.size < 0) { e.x = e.size; e.dx *= -1; }
+        if (e.x + e.size > window.innerWidth) { e.x = window.innerWidth - e.size; e.dx *= -1; }
+        if (e.y - e.size < 0) { e.y = e.size; e.dy *= -1; }
+        if (e.y + e.size > window.innerHeight) { e.y = window.innerHeight - e.size; e.dy *= -1; }
+      });
+      checkCollisions();
+      drawEntities();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function endGame() {
+      document.getElementById("gameOver").style.display = "block";
+      document.getElementById("finalStats").innerText = `Score : ${player.score}\nTemps : ${survivalTime}s`;
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      if (!isPaused) requestAnimationFrame(gameLoop);
+    }
+
+    // Touches pour mobile : déplacement du joueur
+    canvas.addEventListener("touchstart", (e) => {
+      if (e.touches.length > 0) {
+        mouseX = e.touches[0].clientX;
+        mouseY = e.touches[0].clientY;
+      }
+    }, { passive: true });
+    canvas.addEventListener("touchmove", (e) => {
+      if (e.touches.length > 0) {
+        mouseX = e.touches[0].clientX;
+        mouseY = e.touches[0].clientY;
+      }
+    }, { passive: true });
+
+    // Pour desktop (test PC)
+    canvas.addEventListener("mousemove", (e) => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+    });
+
+    document.getElementById("startBtn").addEventListener("click", startGame);
+    document.getElementById("customBtn").addEventListener("click", openCustomization);
+    document.getElementById("saveBtn").addEventListener("click", saveCustomization);
+    document.getElementById("backBtn").addEventListener("click", backToMenu);
+    document.getElementById("pauseBtn").addEventListener("click", togglePause);
+  </script>
+</body>
+</html>
